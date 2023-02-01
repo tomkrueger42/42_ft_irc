@@ -5,7 +5,9 @@
 #include "User.hpp"
 
 #include <string>
+#include <sstream>
 #include <poll.h> // for pollfd
+#include <vector>
 
 class Server
 {
@@ -22,12 +24,14 @@ class Server
     void pollLoop( void );
 
   private:
-    pollfd      m_socket;
+    typedef std::vector< pollfd > PfdVector;
+
+    PfdVector   m_pfds;
     Users       m_users;
     Channels    m_channels;
     std::string m_server_password;
 
-    void  acceptConnections( void );
-    int   parseCMD( Users::iterator, std::string );
-    int   handleCMD( Users::iterator, Command& );
+    PfdVector::iterator acceptConnections( void );
+    // int                 parseCMD( Users::iterator, std::string );
+    // int                 handleCMD( Users::iterator, Command& );
 };

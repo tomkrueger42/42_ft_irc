@@ -10,28 +10,23 @@
 std::string&    User::get_name()    { return m_username; }
 std::string&    User::get_user_ip() { return m_ipAddress; }
 std::string&    User::get_nick()    { return m_nickname; }
-int             User::get_fd()      { return m_socket.fd; }
-short int&      User::get_revents() { return m_socket.revents; }
-pollfd          User::get_socket()  { return m_socket; }
+int             User::get_fd()      { return m_fd; }
 bool            User::get_is_registered() { return m_isRegistered; }
 
-User::User( pollfd socket, sockaddr_in addr, socklen_t addr_len )
+User::User( int fd, sockaddr_in addr )
     : m_username("*"), m_nickname("*"), m_isAuth(false), m_isRegistered(false),
-    m_socket(socket), m_addr(addr), m_len(addr_len)
+   m_fd(fd), m_addr(addr)
 {
     // irc_log(trace, "User::User(): ", fd);
 
-    m_socket.events = POLLIN;
-    m_socket.revents = -1;
     m_ipAddress = inet_ntoa(m_addr.sin_addr);
 }
 
 User::~User( void ) {}
 
-int User::parseCMD( std::string buffer, Server& server )
+void User::parseCMD( std::string buffer, Server& server )
 {
-    if (!buffer.empty())
-        irc_log(trace, "USER::parseCMD(): ", buffer);
+    irc_log(trace, "User::parseCMD(): ", m_nickname);
 
     buffer_in += buffer;
     while (buffer_in.find("\r\n") != buffer_in.npos)
@@ -41,24 +36,22 @@ int User::parseCMD( std::string buffer, Server& server )
 
         // Command cmd = tokenizeCMD(buffer_in);
 
-        if (handleCMD(tokenizeCMD(buffer_in), server))
-            return 1;
+        handleCMD(tokenizeCMD(buffer_in), server);
         buffer_in = tmp;
     }
-    return 0;
 }
 
-int User::handleCMD( Command cmd, Server& serv )
+void User::handleCMD( Command cmd, Server& serv )
 {
-    irc_log(trace, "User::handleCMD() ", get_name());
+    irc_log(trace, "User::handleCMD() ", cmd.directive);
 
     if (cmd.directive == "PASS")
         auth_user(cmd, serv); // needs to erase user if password is wrong
     else if (m_isAuth == false)
     {
-        err_passwdmissmatch(m_socket.fd, m_nickname); // not sure if user needs to be deleted if PASS is not sent immediately
+        err_passwdmissmatch(m_fd, m_nickname); // not sure if user needs to be deleted if PASS is not sent immediately
         // serv.erase_user_by_nick(m_nickname);
-        return 0;
+        return ;
     }
     else
     {
@@ -69,7 +62,7 @@ int User::handleCMD( Command cmd, Server& serv )
         else if (cmd.directive == "CAP")
             set_user_metadata(cmd.users);
         else if (m_isRegistered == false)
-            err_notregistered(m_socket.fd);
+            err_notregistered(m_fd);
         else
         {
             if (cmd.directive == "PING")
@@ -93,12 +86,11 @@ int User::handleCMD( Command cmd, Server& serv )
             else if (cmd.directive == "QUIT")
                 quit(cmd.msg, serv);
             else if (cmd.directive == "SQUIT")
-                return -1;
+                throw CloseServer();
             else
-                err_unknowncommand(m_socket.fd, cmd.directive);
+                err_unknowncommand(m_fd, cmd.directive);
         }
     }
-    return 0;
 }
 
 void User::auth_user( Command& cmd,  Server& serv )
@@ -108,15 +100,15 @@ void User::auth_user( Command& cmd,  Server& serv )
     if (m_isAuth == false)
     {
         if (cmd.users.size() == 0)
-            err_needmoreparams(m_socket.fd, cmd.directive);
+            err_needmoreparams(m_fd, cmd.directive);
         else if (cmd.users.back() == serv.getPassword())
             m_isAuth = true;
         else
-            err_passwdmissmatch(m_socket.fd, m_nickname);
+            err_passwdmissmatch(m_fd, m_nickname);
     }
     else
     {
-        err_alreadyregistred(m_socket.fd);
+        err_alreadyregistred(m_fd);
     }
     if (m_isAuth == false)
         serv.getUsers().erase(find_user_by_nick(m_nickname, serv.getUsers())); // könnte das einen SEGFAULT geben?
@@ -128,24 +120,24 @@ void User::set_nickname( Command& cmd, Users& users, Channels& channels )
 
     if (cmd.users.empty())
     {
-        err_needmoreparams(m_socket.fd, cmd.directive);
+        err_needmoreparams(m_fd, cmd.directive);
     }
     else if (!isAlphaNum(cmd.users.front()))
     {
-        err_errouneusnickname(m_socket.fd, cmd.users.front());
+        err_errouneusnickname(m_fd, cmd.users.front());
         return ;
     }
     Users::iterator u_it = find_user_by_nick(cmd.users.front(), users);
     if (u_it != users.end())
     {
-        err_nicknameinuse(m_socket.fd, cmd.users.front(), m_nickname);
+        err_nicknameinuse(m_fd, cmd.users.front(), m_nickname);
         if (m_nickname != "*")
         {
             return ;
         }
         cmd.users.front() += "1"; // adds "1" when new user logs in and the nick is already in use
     }
-    build_new_nickname(m_socket.fd, *this, cmd.users.front());
+    build_new_nickname(m_fd, *this, cmd.users.front());
     for (Channels::iterator ch_it = channels.begin(); ch_it != channels.end(); ch_it++)
     {
         ch_it->change_member_nickname(m_nickname, cmd.users.front());
@@ -157,9 +149,11 @@ void User::set_nickname( Command& cmd, Users& users, Channels& channels )
 
 void User::set_username(  Command& cmd,  StringVector& strVec )
 {
+    irc_log(trace, "User::set_username()", "");
+
     if (strVec.empty())
     {
-        err_needmoreparams(m_socket.fd, cmd.directive);
+        err_needmoreparams(m_fd, cmd.directive);
         return ;
     }
     if (isAlphaNum(strVec.front()))
@@ -173,7 +167,7 @@ void User::register_user( void )
 {
     if (m_isRegistered == false && m_nickname != "*" && m_username != "*")
     {
-        build_welcome(m_socket.fd, m_nickname);
+        build_welcome(m_fd, m_nickname);
         m_isRegistered = true;
     }
 }
@@ -189,17 +183,17 @@ void User::send_privmsg( Command& cmd, Users& users )
 
     if (cmd.users.empty())
     {
-        err_norecipient(m_socket.fd, cmd.directive);
+        err_norecipient(m_fd, cmd.directive);
         return ;
     }
     else if (cmd.msg.empty())
     {
-        err_notexttosend(m_socket.fd);
+        err_notexttosend(m_fd);
         return ;
     }
     else if (!check_duplicates(cmd.users).empty())
     {
-        err_toomanytargets(m_socket.fd, check_duplicates(cmd.users));
+        err_toomanytargets(m_fd, check_duplicates(cmd.users));
         return ;
     }
     for (StringVector::iterator name_it = cmd.users.begin(); name_it != cmd.users.end(); name_it++)
@@ -207,11 +201,11 @@ void User::send_privmsg( Command& cmd, Users& users )
         Users::iterator recipient = find_user_by_nick(*name_it, users);
         if (recipient != users.end())
         {
-            build_privmsg(recipient->m_socket.fd, *this, cmd, recipient->get_nick());
+            build_privmsg(recipient->m_fd, *this, cmd, recipient->get_nick());
         }
         else
         {
-            err_nosuchnick(m_socket.fd, *name_it);
+            err_nosuchnick(m_fd, *name_it);
         }
     }
 }
@@ -225,15 +219,15 @@ void User::send_channel_msg( Command& cmd, Channels& channels )
         Channels::iterator ch_it = find_channel_by_name(*ch_name_it, channels);
         if (ch_it == channels.end())
         {
-            err_nosuchchannel(m_socket.fd, *ch_name_it);
+            err_nosuchchannel(m_fd, *ch_name_it);
             continue ;
         }
         std::string msg = build_privmsg(0, *this, cmd, ch_it->get_name());
         int err = ch_it->channel_message(m_nickname, msg);
         if (err == ERR_NOTONCHANNEL)
-            err_notonchannel(m_socket.fd, ch_it->get_name());
+            err_notonchannel(m_fd, ch_it->get_name());
         else if (err == ERR_CANNOTSENDTOCHAN)
-            err_cannotsendtochan(m_socket.fd, ch_it->get_name());
+            err_cannotsendtochan(m_fd, ch_it->get_name());
     }
 }
 
@@ -243,7 +237,7 @@ void User::join_channel( Command& cmd, Channels& channels )
 
     if (cmd.channels.empty())
     {
-        err_needmoreparams(m_socket.fd, cmd.directive);
+        err_needmoreparams(m_fd, cmd.directive);
         return ;
     }
 
@@ -254,7 +248,7 @@ void User::join_channel( Command& cmd, Channels& channels )
         {
             if (is_valid_channel_name(*ch_name_it))
             {
-                err_nosuchchannel(m_socket.fd, *ch_name_it);
+                err_nosuchchannel(m_fd, *ch_name_it);
                 continue ;
             }
             channels.push_back(*ch_name_it);
@@ -266,13 +260,13 @@ void User::join_channel( Command& cmd, Channels& channels )
         switch (ch_it->add_member(*this, false, channel_key))
         {
         case ERR_CHANNELISFULL:
-            err_channelisfull(m_socket.fd, ch_it->get_name());
+            err_channelisfull(m_fd, ch_it->get_name());
             break ;
         case ERR_INVITEONLY:
-            err_inviteonly(m_socket.fd, ch_it->get_name());
+            err_inviteonly(m_fd, ch_it->get_name());
             break ;
         case ERR_BADCHANNELKEY:
-            err_badchannelkey(m_socket.fd, ch_it->get_name());
+            err_badchannelkey(m_fd, ch_it->get_name());
             break ;
         }
     }
@@ -287,13 +281,13 @@ void User::part_channel( Command& cmd, Channels& channels )
         Channels::iterator ch_it = find_channel_by_name(*ch_name_it, channels);
         if (ch_it == channels.end())
         {
-            err_nosuchchannel(m_socket.fd, *ch_name_it);
+            err_nosuchchannel(m_fd, *ch_name_it);
             continue ;
         }
         switch (ch_it->remove_member(m_nickname, cmd.msg))
         {
         case ERR_NOTONCHANNEL:
-            err_notonchannel(m_socket.fd, ch_it->get_name());
+            err_notonchannel(m_fd, ch_it->get_name());
             break ;
         case -1:
             channels.erase(ch_it); // channel is empty, will be deleted
@@ -318,7 +312,7 @@ void User::kick_user( Command& cmd, Users& users, Channels& channels )
 
     if (cmd.channels.empty() || cmd.users.empty())
     {
-        err_needmoreparams(m_socket.fd, cmd.directive);
+        err_needmoreparams(m_fd, cmd.directive);
         return ;
     }
 
@@ -327,7 +321,7 @@ void User::kick_user( Command& cmd, Users& users, Channels& channels )
         Users::iterator kick_it = find_user_by_nick(*u_nick_it, users);
         if (kick_it == users.end())
         {
-            err_nosuchnick(m_socket.fd, *u_nick_it); // the user does not exist on the server
+            err_nosuchnick(m_fd, *u_nick_it); // the user does not exist on the server
             continue ;
         }
 
@@ -338,19 +332,19 @@ void User::kick_user( Command& cmd, Users& users, Channels& channels )
             Channels::iterator ch_it = find_channel_by_name(*ch_name_it, channels);
             if (ch_it == channels.end())
             {
-                err_nosuchchannel(m_socket.fd, *ch_name_it);
+                err_nosuchchannel(m_fd, *ch_name_it);
                 continue ;
             }
             switch (ch_it->kick_member(m_nickname, kick_it->get_nick(), cmd.msg))
             {
             case ERR_NOTONCHANNEL:
-                err_notonchannel(m_socket.fd, ch_it->get_name());
+                err_notonchannel(m_fd, ch_it->get_name());
                 break ;
             case ERR_CHANOPRIVSNEEDED:
-                err_chanoprivsneeded(m_socket.fd, ch_it->get_name());
+                err_chanoprivsneeded(m_fd, ch_it->get_name());
                 break ;
             case ERR_USERNOTINCHANNEL:
-                err_usernotinchannel(m_socket.fd, kick_it->get_nick(), ch_it->get_name());
+                err_usernotinchannel(m_fd, kick_it->get_nick(), ch_it->get_name());
                 break ;
             case -1:
                 channels.erase(ch_it); // channel is empty, will be deleted
@@ -366,12 +360,12 @@ void User::mode( Command& cmd, Channels& channels )
     if (cmd.channels.empty() || cmd.args.empty())
     {
         return ;
-        err_needmoreparams(m_socket.fd, cmd.directive); // WeeChat sometimes sends mode requests without arguments for no appearant reason, with other clients this error message should be sent before returning out of the function, obviously
+        err_needmoreparams(m_fd, cmd.directive); // WeeChat sometimes sends mode requests without arguments for no appearant reason, with other clients this error message should be sent before returning out of the function, obviously
     }
     Channels::iterator ch_it = find_channel_by_name(cmd.channels.front(), channels);
     if (ch_it == channels.end())
     {
-        err_nosuchchannel(m_socket.fd, cmd.channels.front());
+        err_nosuchchannel(m_fd, cmd.channels.front());
         return ;
     }
 
@@ -381,22 +375,22 @@ void User::mode( Command& cmd, Channels& channels )
     switch (err)
     {
     case ERR_NOTONCHANNEL:
-        err_notonchannel(m_socket.fd, ch_it->get_name());
+        err_notonchannel(m_fd, ch_it->get_name());
         break ;
     case ERR_USERNOTINCHANNEL:
-        err_usernotinchannel(m_socket.fd, cmd.users.front(), ch_it->get_name());
+        err_usernotinchannel(m_fd, cmd.users.front(), ch_it->get_name());
         break ;
     case ERR_NEEDMOREPARAMS:
-        err_needmoreparams(m_socket.fd, cmd.directive);
+        err_needmoreparams(m_fd, cmd.directive);
         break ;
     case ERR_KEYSET:
-        err_keyset(m_socket.fd, ch_it->get_name()); // does not quite work, yet!!
+        err_keyset(m_fd, ch_it->get_name()); // does not quite work, yet!!
         break ;
     case ERR_UNKNOWNMODE:
-        err_unknownmode(m_socket.fd, ch_it->get_name());
+        err_unknownmode(m_fd, ch_it->get_name());
         break ;
     case ERR_CHANOPRIVSNEEDED:
-        err_chanoprivsneeded(m_socket.fd, ch_it->get_name());
+        err_chanoprivsneeded(m_fd, ch_it->get_name());
         break ;
     }
 }
@@ -408,7 +402,7 @@ void User::topic( Command& cmd, Channels& channels )
     Channels::iterator ch_it = find_channel_by_name(cmd.channels.front(), channels);
     if (ch_it == channels.end())
     {
-        err_nosuchchannel(m_socket.fd, cmd.channels.front());
+        err_nosuchchannel(m_fd, cmd.channels.front());
         return ;
     }
 
@@ -416,16 +410,16 @@ void User::topic( Command& cmd, Channels& channels )
     {
         switch (ch_it->topic(m_nickname))
         case ERR_NOTONCHANNEL:
-            err_notonchannel(m_socket.fd, ch_it->get_name());
+            err_notonchannel(m_fd, ch_it->get_name());
     }
     else
     {
         switch (ch_it->set_topic(m_nickname, cmd.msg))
         {
         case ERR_NOTONCHANNEL:
-            err_notonchannel(m_socket.fd, ch_it->get_name());
+            err_notonchannel(m_fd, ch_it->get_name());
         case ERR_CHANOPRIVSNEEDED:
-            err_chanoprivsneeded(m_socket.fd, ch_it->get_name());
+            err_chanoprivsneeded(m_fd, ch_it->get_name());
         }
     }
 }
@@ -437,40 +431,40 @@ void User::invite(Command& cmd, Channels& channels, Users& users)
     if (cmd.channels.empty() || cmd.users.empty())
     {
         return ;
-        err_needmoreparams(m_socket.fd, cmd.directive); // WeeChat always sends two invite requests, the second one without arguments for no appearant reason. For release code, the error message should be sent before returning out of the function, obviously
+        err_needmoreparams(m_fd, cmd.directive); // WeeChat always sends two invite requests, the second one without arguments for no appearant reason. For release code, the error message should be sent before returning out of the function, obviously
     }
 
     Users::iterator u_it = find_user_by_nick(cmd.users.front(), users);
     if (u_it == users.end())
     {
-        err_nosuchnick(m_socket.fd, cmd.users.front());
+        err_nosuchnick(m_fd, cmd.users.front());
         return ;
     }
 
     Channels::iterator ch_it = find_channel_by_name(cmd.channels.front(), channels);
     if (ch_it == channels.end())
     {
-        err_nosuchchannel(m_socket.fd, cmd.channels.front());
+        err_nosuchchannel(m_fd, cmd.channels.front());
         return ;
     }
 
     switch (ch_it->invite_user(*u_it, m_nickname))
     {
     case ERR_NOTONCHANNEL:
-        err_notonchannel(m_socket.fd, ch_it->get_name());
+        err_notonchannel(m_fd, ch_it->get_name());
         break ; 
             break ; 
         break ; 
     case ERR_USERONCHANNEL:
-        err_useronchannel(m_socket.fd, u_it->get_nick(), ch_it->get_name());
+        err_useronchannel(m_fd, u_it->get_nick(), ch_it->get_name());
         break ; 
             break ; 
         break ; 
     case ERR_CHANNELISFULL:
-        err_channelisfull(m_socket.fd, ch_it->get_name());
+        err_channelisfull(m_fd, ch_it->get_name());
         break ;
     case ERR_CHANOPRIVSNEEDED:
-        err_chanoprivsneeded(m_socket.fd, ch_it->get_name());
+        err_chanoprivsneeded(m_fd, ch_it->get_name());
         break ;
     }
 }
@@ -480,10 +474,11 @@ void User::quit( std::string msg,  Server& serv )
     irc_log(trace, "User::quit(): ", m_nickname);
 
     part_all_channels(msg, serv.getChannels());
-    serv.erase_user_by_nick(m_nickname);
+    // serv.erase_user_by_nick(m_nickname);
+    throw CloseUser();
 }
 
 void User::pingpong( void )
 {
-    build_pingpong(m_socket.fd);
+    build_pingpong(m_fd);
 }

@@ -4,8 +4,10 @@
 #include "General.hpp"
 
 #include <string>
+#include <sstream>
 #include <poll.h> // pollfd
 #include <netinet/in.h> // struct sockaddr_in, socklen_t
+#include <exception>
 
 class Server;
 
@@ -16,10 +18,10 @@ typedef std::vector< User > Users;
 class User
 {
   public:
-    User( pollfd, sockaddr_in, socklen_t );
+    User( int, sockaddr_in );
     ~User( void );
-    int     parseCMD( std::string, Server& );
-    int     handleCMD( Command, Server& );
+    void    parseCMD( std::string, Server& );
+    void    handleCMD( Command, Server& );
     void    set_user_metadata(  StringVector& strVec );
     void    auth_user( Command& cmd,  Server& serv );
     void    set_nickname( Command&, Users&, Channels& );
@@ -46,6 +48,25 @@ class User
     std::string   buffer_in;
     std::string   buffer_out;
 
+
+    class CloseServer : public std::exception
+    {
+      public:
+        const char* what() const throw()
+        {
+            return "Closing server by ";
+        }
+    };
+
+    class CloseUser : public std::exception
+    {
+      public:
+        const char* what() const throw()
+        {
+            return "Closing user with nickname ";
+        }
+    };
+
   private:
 
     void register_user( void );
@@ -57,10 +78,10 @@ class User
     bool        m_isRegistered;
     StringVector  m_metadata;
 
-    pollfd      m_socket;
+    int         m_fd;
     std::string m_ipAddress;
     sockaddr_in m_addr;
-    socklen_t   m_len;
+    // socklen_t   m_len;
 };
 
 // user_utils.cpp
