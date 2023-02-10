@@ -15,7 +15,6 @@ int Channel::add_member( User& new_member, bool is_invitation, std::string key =
 
     if (find_member(new_member.get_nick()) != m_members.end())
         return ERR_USERONCHANNEL; // useronchannel
-
     else if (m_flags & MBR_LIMIT_CHANNEL_FLAG && m_members.size() >= m_member_limit)
         return ERR_CHANNELISFULL; // channelisfull
     else if ((m_flags & PRIVATE_CHANNEL_FLAG

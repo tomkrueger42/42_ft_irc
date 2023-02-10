@@ -19,8 +19,6 @@ class Server
      Users&        getUsers( void ) ;
      Channels&     getChannels( void ) ;
 
-    void          erase_user_by_nick(  std::string& nickname );
-
     void pollLoop( void );
 
   private:
@@ -32,6 +30,4 @@ class Server
     std::string m_server_password;
 
     PfdVector::iterator acceptConnections( void );
-    // int                 parseCMD( Users::iterator, std::string );
-    // int                 handleCMD( Users::iterator, Command& );
 };

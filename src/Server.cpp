@@ -47,6 +47,8 @@ Server::~Server()
 
     for (PfdVector::iterator it = m_pfds.begin(); it < m_pfds.end(); it++)
         close(it->fd); // closing open sockets
+    m_pfds.clear();
+    m_users.clear();
 }
 
 std::string& Server::getPassword( void ) 
@@ -83,13 +85,6 @@ std::vector< pollfd >::iterator Server::acceptConnections( void )
     return m_pfds.begin();
 }
 
-void Server::erase_user_by_nick( std::string& nickname )
-{
-    Users::iterator user_it = find_user_by_nick(nickname, m_users);
-    close(user_it->get_fd()); // broken pipe??
-    m_users.erase(user_it);
-}
-
 Users::iterator find_user_by_fd( int fd, Users& users )
 {
     Users::iterator it = users.begin();
@@ -100,11 +95,10 @@ Users::iterator find_user_by_fd( int fd, Users& users )
     }
     return it;
 }
+
 #include "User.hpp"
 void Server::pollLoop()
 {
-    // static long i = 0;
-    // static long l = 0;
     while (true)
     {
         irc_log(info, "_______________POLLING_______________\n", "");
@@ -121,11 +115,8 @@ void Server::pollLoop()
             irc_log(dev, "m_pfds size: ", m_pfds.size());
             for (PfdVector::iterator pfd_it = m_pfds.begin(); pfd_it < m_pfds.end(); pfd_it++)
             {
-                irc_log(info, "distance: ", m_pfds.end().base() - m_pfds.begin().base());
-                if (pfd_it->revents != POLLIN)
-                {
-                    continue ;              // nothing changed
-                }
+                if (pfd_it->revents == 0)
+                    continue ;
 
                 if (pfd_it == m_pfds.begin())
                 {
@@ -139,7 +130,7 @@ void Server::pollLoop()
                 {
                     char buffer[BUFFER_SIZE];
                     std::memset(&buffer, 0, sizeof(buffer));
-                    if (recv(pfd_it->fd, &buffer, sizeof(buffer), 0) == 0) // rc == 0 -> connection closed by User
+                    if (!recv(pfd_it->fd, &buffer, sizeof(buffer), 0))
                         u_it->quit(" :Connection lost", *this);
                     else
                         u_it->parseCMD(buffer, *this);

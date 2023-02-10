@@ -4,7 +4,6 @@
 #include "Channel.hpp"
 #include "replies.hpp"
 
-#include <sys/socket.h> // accept()
 #include <arpa/inet.h> // net_ntoa()
 
 std::string&    User::get_name()    { return m_username; }
@@ -15,7 +14,7 @@ bool            User::get_is_registered() { return m_isRegistered; }
 
 User::User( int fd, sockaddr_in addr )
     : m_username("*"), m_nickname("*"), m_isAuth(false), m_isRegistered(false),
-   m_fd(fd), m_addr(addr)
+    m_fd(fd), m_addr(addr)
 {
     // irc_log(trace, "User::User(): ", fd);
 
@@ -48,11 +47,7 @@ void User::handleCMD( Command cmd, Server& serv )
     if (cmd.directive == "PASS")
         auth_user(cmd, serv); // needs to erase user if password is wrong
     else if (m_isAuth == false)
-    {
         err_passwdmissmatch(m_fd, m_nickname); // not sure if user needs to be deleted if PASS is not sent immediately
-        // serv.erase_user_by_nick(m_nickname);
-        return ;
-    }
     else
     {
         if (cmd.directive == "NICK")
@@ -121,6 +116,7 @@ void User::set_nickname( Command& cmd, Users& users, Channels& channels )
     if (cmd.users.empty())
     {
         err_needmoreparams(m_fd, cmd.directive);
+        return ;
     }
     else if (!isAlphaNum(cmd.users.front()))
     {
@@ -132,9 +128,7 @@ void User::set_nickname( Command& cmd, Users& users, Channels& channels )
     {
         err_nicknameinuse(m_fd, cmd.users.front(), m_nickname);
         if (m_nickname != "*")
-        {
             return ;
-        }
         cmd.users.front() += "1"; // adds "1" when new user logs in and the nick is already in use
     }
     build_new_nickname(m_fd, *this, cmd.users.front());
@@ -144,7 +138,6 @@ void User::set_nickname( Command& cmd, Users& users, Channels& channels )
     }
     m_nickname = cmd.users.front();
     register_user();
-    // return 0;
 }
 
 void User::set_username(  Command& cmd,  StringVector& strVec )
@@ -172,7 +165,7 @@ void User::register_user( void )
     }
 }
 
-void User::set_user_metadata(  StringVector& strVec )
+void User::set_user_metadata( StringVector& strVec )
 {
     m_metadata.insert(m_metadata.end(), strVec.begin(), strVec.end());
 }
@@ -359,8 +352,8 @@ void User::mode( Command& cmd, Channels& channels )
 
     if (cmd.channels.empty() || cmd.args.empty())
     {
-        return ;
         err_needmoreparams(m_fd, cmd.directive); // WeeChat sometimes sends mode requests without arguments for no appearant reason, with other clients this error message should be sent before returning out of the function, obviously
+        return ;
     }
     Channels::iterator ch_it = find_channel_by_name(cmd.channels.front(), channels);
     if (ch_it == channels.end())
@@ -408,8 +401,7 @@ void User::topic( Command& cmd, Channels& channels )
 
     if (cmd.msg.empty())
     {
-        switch (ch_it->topic(m_nickname))
-        case ERR_NOTONCHANNEL:
+        if (ch_it->topic(m_nickname) == ERR_NOTONCHANNEL)
             err_notonchannel(m_fd, ch_it->get_name());
     }
     else
@@ -430,8 +422,8 @@ void User::invite(Command& cmd, Channels& channels, Users& users)
 
     if (cmd.channels.empty() || cmd.users.empty())
     {
-        return ;
         err_needmoreparams(m_fd, cmd.directive); // WeeChat always sends two invite requests, the second one without arguments for no appearant reason. For release code, the error message should be sent before returning out of the function, obviously
+        return ;
     }
 
     Users::iterator u_it = find_user_by_nick(cmd.users.front(), users);
@@ -452,14 +444,10 @@ void User::invite(Command& cmd, Channels& channels, Users& users)
     {
     case ERR_NOTONCHANNEL:
         err_notonchannel(m_fd, ch_it->get_name());
-        break ; 
-            break ; 
-        break ; 
+        break ;
     case ERR_USERONCHANNEL:
         err_useronchannel(m_fd, u_it->get_nick(), ch_it->get_name());
-        break ; 
-            break ; 
-        break ; 
+        break ;
     case ERR_CHANNELISFULL:
         err_channelisfull(m_fd, ch_it->get_name());
         break ;
@@ -474,7 +462,6 @@ void User::quit( std::string msg,  Server& serv )
     irc_log(trace, "User::quit(): ", m_nickname);
 
     part_all_channels(msg, serv.getChannels());
-    // serv.erase_user_by_nick(m_nickname);
     throw CloseUser();
 }
 
