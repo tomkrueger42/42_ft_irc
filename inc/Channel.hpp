@@ -18,15 +18,15 @@ struct MemberPrivileges {
 
 #include <vector>
 class User;
-typedef std::pair< User, struct MemberPrivileges > Member;
+typedef std::pair< User*, struct MemberPrivileges > Member;
 typedef std::vector< Member >           Members;
 
 class Channel
 {
   public:
     Channel( std::string& );
-    int                 add_member( User&, bool, std::string );
-    int                 invite_user(User&, std::string&);
+    int                 add_member( User*, bool, std::string );
+    int                 invite_user(User*, std::string&);
     void                change_member_nickname( std::string&, std::string& );
     int                 remove_member( std::string&, std::string& );
     int                 kick_member( std::string&, std::string&, std::string& );
@@ -41,6 +41,7 @@ class Channel
 
   private:
     Members::iterator   find_member( std::string& );
+    void                broadcast(  std::string );
     void                broadcast(  std::string, Members::iterator );
     int                 is_chanop( Members::iterator );
     size_t              num_of_chanops( void );

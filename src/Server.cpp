@@ -45,13 +45,14 @@ Server::~Server()
 {
     irc_log(trace, "Server destructor()", "");
 
+    flush_all_user_buffers();
     for (PfdVector::iterator it = m_pfds.begin(); it < m_pfds.end(); it++)
         close(it->fd); // closing open sockets
     m_pfds.clear();
     m_users.clear();
 }
 
-std::string& Server::getPassword( void ) 
+const std::string& Server::getPassword( void ) const
 {
     return m_server_password;
 }
@@ -78,7 +79,7 @@ std::vector< pollfd >::iterator Server::acceptConnections( void )
     {
         pollfd      user_socket = {user_fd, POLLIN, -1};
         m_pfds.push_back(user_socket);
-        m_users.push_back(User(user_fd, user_addr));
+        m_users[user_fd] = User(user_fd, user_addr);
 
         irc_log(info, "new user fd: ", user_fd);
     }
@@ -90,10 +91,16 @@ Users::iterator find_user_by_fd( int fd, Users& users )
     Users::iterator it = users.begin();
     for (; it != users.end(); it++)
     {
-        if (fd == it->get_fd())
+        if (fd == it->first)
             break ;
     }
     return it;
+}
+
+void Server::flush_all_user_buffers( void )
+{
+    for (Users::iterator u_it = m_users.begin(); u_it != m_users.end(); u_it++)
+        u_it->second.flush_buffer();
 }
 
 #include "User.hpp"
@@ -131,23 +138,25 @@ void Server::pollLoop()
                     char buffer[BUFFER_SIZE];
                     std::memset(&buffer, 0, sizeof(buffer));
                     if (!recv(pfd_it->fd, &buffer, sizeof(buffer), 0))
-                        u_it->quit(" :Connection lost", *this);
+                        u_it->second.quit(" :Connection lost", *this);
                     else
-                        u_it->parseCMD(buffer, *this);
+                        u_it->second.parseCMD(buffer, *this);
                 }
                 catch( const User::CloseUser& e )
                 {
+                    irc_log(info, e.what(), u_it->second.get_nick());
+                    u_it->second.flush_buffer();
                     close(pfd_it->fd);
                     m_pfds.erase(pfd_it);
                     m_users.erase(u_it);
-                    irc_log(info, e.what(), u_it->get_nick());
                 }
                 catch ( const User::CloseServer& e )
                 {
-                    irc_log(info, e.what(), u_it->get_nick());
+                    irc_log(info, e.what(), u_it->second.get_nick());
                     return ;
                 }
             }
         }
+        flush_all_user_buffers();
     }
 }

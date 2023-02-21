@@ -19,7 +19,7 @@ int is_valid_channel_name(  std::string& ch_name )
 }
 
 #include "User.hpp"
-typedef std::pair< User, struct MemberPrivileges > Member;
+typedef std::pair< User*, struct MemberPrivileges > Member;
 typedef std::vector< Member >           Members;
 
 std::string get_names( Members& members )
@@ -29,7 +29,7 @@ std::string get_names( Members& members )
     {
         if (it->second.chanop == 1)
             names += "@";
-        names += it->first.get_nick() + " ";
+        names += it->first->get_nick() + " ";
     }
     return names;
 }

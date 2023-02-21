@@ -1,7 +1,6 @@
 #include "User.hpp"
 
 #include <sstream> // std::stringstream
-#include <sys/socket.h> // send()
 
 std::string build_full_client_identifier( User& user )
 {
@@ -12,77 +11,59 @@ std::string build_full_client_identifier( User& user )
     return ss.str();
 }
 
-std::string build_welcome( int fd, std::string nick )
+std::string build_welcome( std::string nick )
 {
     std::stringstream ss;
 
     ss  << ":" << SERVER_NAME << " 001 " << nick
         << " :Welcome to our ft_irc " << nick << "!" << "\r\n";
 
-    std::string reply = ss.str();
-    if (fd)
-        send(fd, reply.c_str(), reply.length(), 0);
-    return reply;
+    return ss.str();
 }
 
-std::string build_join_channel( int fd, User& new_member, std::string& channel_name )
+std::string build_join_channel( User& new_member, std::string& channel_name )
 {
     std::stringstream ss;
 
     ss << ":" << build_full_client_identifier(new_member) << " JOIN " << channel_name << "\r\n";
 
-    std::string reply = ss.str();
-    if (fd)
-        send(fd, reply.c_str(), reply.length(), 0);
-    return reply;
+    return ss.str();
 }
 
-std::string build_part_channel( int fd, User& user, std::string& channel_name, std::string& msg )
+std::string build_part_channel( User& user, std::string& channel_name, std::string& msg )
 {
     std::stringstream ss;
 
     ss << ":" << build_full_client_identifier(user) << " PART " << channel_name << " " << msg << "\r\n";
 
-    std::string reply = ss.str();
-    if (fd)
-        send(fd, reply.c_str(), reply.length(), 0);
-    return reply;
+    return ss.str();
 }
 
-std::string build_new_nickname( int fd, User& user, std::string& nick )
+std::string build_new_nickname( User& user, std::string& nick )
 {
     std::stringstream ss;
 
     ss << ":" << build_full_client_identifier(user) << " NICK :" << nick << "\r\n";
 
-    std::string reply = ss.str();
-    if (fd)
-        send(fd, reply.c_str(), reply.length(), 0);
-    return reply;
+    return ss.str();
 }
 
-std::string build_privmsg( int fd, User& user, Command& cmd, std::string &other_user )
+std::string build_privmsg( User& user, Command& cmd, std::string &other_user )
 {
     std::stringstream ss;
 
     ss << ":" << build_full_client_identifier(user) << " " << cmd.directive << " " << other_user << " " << cmd.msg << "\r\n";
 
-    std::string reply = ss.str();
-    if (fd)
-        send(fd, reply.c_str(), reply.length(), 0);
-    return reply;
+    return ss.str();
 }
 
-std::string build_pingpong( int fd )
+std::string build_pingpong( void )
 {
     std::stringstream ss;
 
     ss << "PONG " << SERVER_NAME << "\r\n";
 
-    std::string reply = ss.str();
-    if (fd)
-        send(fd, reply.c_str(), reply.length(), 0);
-    return reply;
+    return ss.str();
 }
 
 Users::iterator find_user_by_nick( std::string nick, Users& users )
@@ -90,7 +71,7 @@ Users::iterator find_user_by_nick( std::string nick, Users& users )
     Users::iterator it = users.begin();
     for (; it != users.end(); it++)
     {
-        if (nick == it->get_nick())
+        if (nick == it->second.get_nick())
             break ;
     }
     return it;

@@ -11,13 +11,14 @@
 
 class Server;
 
-#include <vector>
+#include <map>
 class User;
-typedef std::vector< User > Users;
+typedef std::map< int, User > Users;
 
 class User
 {
   public:
+    User( void );
     User( int, sockaddr_in );
     ~User( void );
     void    parseCMD( std::string, Server& );
@@ -37,6 +38,9 @@ class User
     void    invite( Command&, Channels&, Users&);
     void    quit( std::string msg,  Server& serv );
     void    pingpong( void );
+
+
+    void flush_buffer( void );
 
     std::string&  get_user_ip();
     std::string&  get_nick();
@@ -86,11 +90,11 @@ class User
 
 // user_utils.cpp
 std::string     build_full_client_identifier( User& );
-std::string     build_welcome( int, std::string );
-std::string     build_join_channel( int, User&, std::string& );
-std::string     build_part_channel( int, User&, std::string&, std::string& );
-std::string     build_new_nickname( int, User&, std::string& );
-std::string     build_privmsg( int, User&, Command&, std::string& );
-std::string     build_pingpong( int );
+std::string     build_welcome( std::string );
+std::string     build_join_channel( User&, std::string& );
+std::string     build_part_channel( User&, std::string&, std::string& );
+std::string     build_new_nickname( User&, std::string& );
+std::string     build_privmsg( User&, Command&, std::string& );
+std::string     build_pingpong( );
 Users::iterator find_user_by_nick( std::string, Users& );
 std::string     check_duplicates( StringVector& );

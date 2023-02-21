@@ -9,11 +9,11 @@
 Channel::Channel( std::string& name ) : m_name(name), m_flags(0), m_member_limit(LONG_MAX) {}
 
 // Adds new_member to m_members
-int Channel::add_member( User& new_member, bool is_invitation, std::string key = "" )
+int Channel::add_member( User* new_member, bool is_invitation, std::string key = "" )
 {
-    // irc_log(trace, "Channel::add_member(): ", new_member.get_nick());
+    // irc_log(trace, "Channel::add_member(): ", new_member->get_nick());
 
-    if (find_member(new_member.get_nick()) != m_members.end())
+    if (find_member(new_member->get_nick()) != m_members.end())
     {
         return ERR_USERONCHANNEL;
     }
@@ -32,19 +32,20 @@ int Channel::add_member( User& new_member, bool is_invitation, std::string key =
             return ERR_BADCHANNELKEY;
     }
 
-    broadcast(build_join_channel(new_member.get_fd(), new_member, m_name), m_members.end());
-
     m_members.push_back(std::make_pair(new_member, MemberPrivileges()));
+
+    broadcast(build_join_channel(*new_member, m_name));
+
     if (m_members.size() == 1)
         m_members.back().second.chanop = 1;
 
-    topic(m_members.back().first.get_nick());
+    topic(m_members.back().first->get_nick());
 
-    rpl_namreply(new_member.get_fd(), new_member.get_nick(), m_name, m_members);
+    new_member->buffer_out += rpl_namreply(new_member->get_nick(), m_name, m_members);
     return (0);
 }
 
-int Channel::invite_user(User& user, std::string& caller)
+int Channel::invite_user( User* user, std::string& caller )
 {
     // irc_log(trace, "Channel::invite_user(): ", caller);
 
@@ -62,7 +63,7 @@ int Channel::invite_user(User& user, std::string& caller)
     if (err != 0)
         return ERR_USERONCHANNEL;
     
-    rpl_inviting(m_it->first.get_fd(), m_it->first.get_nick(), m_name, user.get_nick());
+    m_it->first->buffer_out += rpl_inviting(m_it->first->get_nick(), m_name, user->get_nick());
     return 0;
 }
 
@@ -74,8 +75,8 @@ void Channel::change_member_nickname( std::string& caller, std::string& new_nick
     if (m_it == m_members.end())
         return ;
 
-    broadcast(build_new_nickname(0, m_it->first, new_nick), m_members.end());
-    m_it->first.get_nick() = new_nick;
+    broadcast(build_new_nickname(*m_it->first, new_nick));
+    m_it->first->get_nick() = new_nick;
 }
 
 int Channel::remove_member( std::string& caller, std::string& msg )
@@ -86,7 +87,7 @@ int Channel::remove_member( std::string& caller, std::string& msg )
     if (m_it == m_members.end())
         return ERR_NOTONCHANNEL;
 
-    broadcast(build_part_channel(m_it->first.get_fd(), m_it->first, m_name, msg), m_it);
+    broadcast(build_part_channel(*m_it->first, m_name, msg));
 
     m_members.erase(m_it);
     if (m_members.size() == 0)
@@ -94,7 +95,7 @@ int Channel::remove_member( std::string& caller, std::string& msg )
     if (num_of_chanops() == 0)
     {
         m_members.front().second.chanop = 1; // new chanop needs to know that he became chanop
-        broadcast(rpl_channelmodeis(0, m_name, "+o", m_members.front().first.get_nick()), m_members.end());
+        broadcast(rpl_channelmodeis(m_name, "+o", m_members.front().first->get_nick()));
     }
     return 0;
 }
@@ -143,9 +144,9 @@ int Channel::topic( std::string& caller )
         return ERR_NOTONCHANNEL;
 
     if (m_topic.empty())
-        rpl_notopic(m_it->first.get_fd(), m_name);
+        m_it->first->buffer_out += rpl_notopic(m_name);
     else
-        rpl_topic(m_it->first.get_fd(), m_name, m_topic);
+        m_it->first->buffer_out += rpl_topic(m_name, m_topic);
 
     return 0;
 }
@@ -195,7 +196,7 @@ int Channel::member_modes( std::string& caller, StringVector& target_nick, Strin
         else
             return ERR_UNKNOWNMODE;
 
-        broadcast(rpl_channelmodeis(m_it->first.get_fd(), m_name, *arg_it, target_it->first.get_nick()), m_it);
+        broadcast(rpl_channelmodeis(m_name, *arg_it, target_it->first->get_nick()));
     }
     return 0;
 }
@@ -228,7 +229,7 @@ int Channel::channel_modes( std::string& caller, StringVector& args, StringVecto
             if (!params.empty())
             {
                 m_member_limit = std::strtol(params.front().c_str(), NULL, 10);
-                broadcast(rpl_channelmodeis(m_it->first.get_fd(), m_name, *arg_it, params.front()), m_it);
+                broadcast(rpl_channelmodeis(m_name, *arg_it, params.front()));
                 break ;
             }
         }
@@ -241,13 +242,13 @@ int Channel::channel_modes( std::string& caller, StringVector& args, StringVecto
             else if (!params.empty() && !m_channel_key.empty())
                 return ERR_KEYSET;
             change_modes(*arg_it, SET_KEY_CHANNEL_FLAG);
-            broadcast(rpl_channelmodeis(m_it->first.get_fd(), m_name, *arg_it, m_channel_key), m_it);
+            broadcast(rpl_channelmodeis(m_name, *arg_it, m_channel_key));
             break ;
         }
         else
             return ERR_UNKNOWNMODE;
 
-        broadcast(rpl_channelmodeis(m_it->first.get_fd(), m_name, *arg_it, ""), m_it);
+        broadcast(rpl_channelmodeis(m_name, *arg_it, ""));
     }
     return 0;
 }
@@ -263,17 +264,24 @@ std::string& Channel::get_name( void )
 Members::iterator Channel::find_member( std::string& nick )
 {
     for (Members::iterator m_it = m_members.begin(); m_it != m_members.end(); m_it++)
-        if (nick == m_it->first.get_nick())
+        if (nick == m_it->first->get_nick())
             return (m_it);
     return (m_members.end());
 }
 
-// Broadcasts message msg to all channel m_members except for the sender if sender is not the end iterator
-void Channel::broadcast(  std::string msg, Members::iterator sender )
+// Broadcasts message msg to all channel m_members
+void Channel::broadcast( std::string msg )
+{
+    for (Members::iterator m_it = m_members.begin(); m_it != m_members.end(); m_it++)
+        m_it->first->buffer_out += msg;
+}
+
+// Broadcasts message msg to all channel m_members except for the sender iterator
+void Channel::broadcast( std::string msg, Members::iterator sender )
 {
     for (Members::iterator m_it = m_members.begin(); m_it != m_members.end(); m_it++)
         if (m_it != sender)
-            send(m_it->first.get_fd(), msg.c_str(), msg.length(), 0);
+            m_it->first->buffer_out += msg;
 }
 
 // Accesses the m_members chanop variable
